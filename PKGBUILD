@@ -1,12 +1,12 @@
 # Maintainer: shetaye
 
 pkgname=shephard
-pkgver=0.1.0
+pkgver=0.1.1
 pkgrel=1
 pkgdesc='TUI tool to sync many Git repositories with pull/commit/push workflows'
 arch=('x86_64' 'aarch64')
 url='https://github.com/shetaye/shephard'
-license=('custom:unknown')
+license=('MIT')
 depends=('git')
 makedepends=('cargo')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
@@ -34,4 +34,5 @@ check() {
 package() {
   cd "$srcdir/$pkgname-$pkgver"
   install -Dm755 "target/release/$pkgname" "$pkgdir/usr/bin/$pkgname"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

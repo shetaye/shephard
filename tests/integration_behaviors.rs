@@ -279,7 +279,10 @@ fn setup_origin_and_clone(root: &Path, name: &str) -> (PathBuf, PathBuf) {
 
 fn clone_repo(root: &Path, origin: &Path, name: &str) -> PathBuf {
     let path = root.join(name);
-    git(root, &["clone", &path_str(origin), &path_str(&path)]);
+    git(
+        root,
+        &["clone", "--branch", "main", &path_str(origin), &path_str(&path)],
+    );
     configure_user(&path);
     path
 }
