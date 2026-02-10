@@ -10,7 +10,7 @@ It scans configured roots for repos, lets you pick targets interactively (or pas
 
 ## Status
 
-Current version: `0.1.1`
+Current version: `0.1.2`
 
 The project is functional, test-covered, and packaged for Arch via `dist/arch/PKGBUILD`.
 
@@ -99,11 +99,51 @@ Resolution order:
 
 ## Side-channel mode
 
-When side-channel mode is enabled, shephard writes sync commits to a configured side remote/branch, not your working branch.
+Side-channel mode lets shephard capture your local changes and push them to a dedicated remote branch without creating commits on your current branch.
 
-This is implemented with an isolated temporary Git index and `git commit-tree`, so local branch `HEAD` is unchanged by side-channel sync commits.
+### Why it exists
 
-Use `shephard apply` to pull those side-channel commits into your current branch manually.
+It solves the "sync my in-progress work to another machine/back-up location, but don't pollute my current branch history yet" use case.
+
+### Exact sync flow (`shephard run` with side-channel enabled)
+
+For each selected repo, shephard does this:
+
+1. Runs `git pull --ff-only` first (same as normal mode).
+2. Verifies the side-channel remote exists, then fetches it with `--prune`.
+3. Creates a temporary Git index file and sets `GIT_INDEX_FILE` to it.
+4. Loads `HEAD` into that temporary index with `git read-tree HEAD`.
+5. Stages into the temporary index from your working tree:
+6. Uses `git add -u` when `include_untracked = false`.
+7. Uses `git add -A` when `include_untracked = true`.
+8. Checks `git diff --cached --quiet` (against the temporary index). If nothing changed, it reports no-op.
+9. Writes the tree with `git write-tree`.
+10. Resolves current side-branch tip (`<remote>/<branch>`) as parent if it exists.
+11. Creates a commit object with `git commit-tree` (without moving local `HEAD`).
+12. Pushes that commit hash directly to `<remote>:<branch>`.
+
+### What side-channel mode changes vs does not change
+
+1. Changes:
+2. The side-channel remote branch advances with a new commit when there are local changes.
+3. Does not change:
+4. Your current branch `HEAD`.
+5. Your real Git index.
+6. Your working tree files.
+
+### Applying side-channel commits later (`shephard apply`)
+
+`shephard apply` fetches the side-channel branch, then applies it to your current branch using one method:
+
+1. `merge`: `git merge --ff-only <remote>/<branch>`
+2. `cherry-pick`: cherry-picks the side branch tip commit
+3. `squash`: `git merge --squash <remote>/<branch>` (staged changes, no commit yet)
+
+### Common failure cases
+
+1. Missing side-channel remote (`side_channel.remote_name`) in a repo.
+2. Non-fast-forward pull failure before sync (`git pull --ff-only`).
+3. Push rejection if side branch advanced concurrently and your local computed parent is stale.
 
 ## Exit codes
 
