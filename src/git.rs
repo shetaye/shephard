@@ -70,16 +70,25 @@ pub fn side_channel_sync(
         .trim()
         .to_string();
     let remote_ref = format!("{}/{}", side.remote_name, side.branch_name);
-    let parent = rev_parse_optional(repo, &remote_ref)?;
+    let parent = if let Some(parent) = rev_parse_optional(repo, &remote_ref)? {
+        Some(parent)
+    } else {
+        Some(rev_parse(repo, "HEAD")?.trim().to_string())
+    };
     // Build a commit object directly from the temporary tree so HEAD stays put.
     let commit_hash = commit_tree(repo, &tree, parent.as_deref(), message)?;
 
+    let destination_ref = if side.branch_name.starts_with("refs/") {
+        side.branch_name.clone()
+    } else {
+        format!("refs/heads/{}", side.branch_name)
+    };
     run_git(
         repo,
         &[
             "push",
             &side.remote_name,
-            &format!("{}:{}", commit_hash, side.branch_name),
+            &format!("{commit_hash}:{destination_ref}"),
         ],
     )
     .map(|_| ())?;

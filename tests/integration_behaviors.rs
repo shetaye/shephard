@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use pretty_assertions::assert_eq;
 use shephard::apply;
 use shephard::cli::{ApplyArgs, ApplyMethodArg};
 use shephard::config::{
@@ -183,6 +184,46 @@ fn workflow_side_channel_pushes_without_local_branch_commit() {
         ],
     );
     assert!(!remote_heads.trim().is_empty());
+}
+
+#[test]
+fn apply_merge_succeeds_when_side_branch_is_first_created_by_sync() {
+    let workspace = temp_workspace();
+    let (origin, dev_repo) = setup_origin_and_clone(workspace.path(), "side-first-merge");
+    let side_remote = create_bare_remote(workspace.path(), "side-first-merge-side");
+
+    add_remote(&dev_repo, SIDE_REMOTE_NAME, &side_remote);
+    write_file(&dev_repo, "tracked.txt", "side branch first commit\n");
+
+    let cfg = run_config(true, false, true, SIDE_REMOTE_NAME, SIDE_BRANCH_NAME);
+    let side_results = workflow::run(std::slice::from_ref(&dev_repo), &cfg);
+    assert!(
+        matches!(side_results[0].status, workflow::RepoStatus::Success),
+        "unexpected side result: status={:?}, message={}",
+        side_results[0].status,
+        side_results[0].message
+    );
+
+    let apply_cfg = resolved_apply_config(SIDE_REMOTE_NAME, SIDE_BRANCH_NAME);
+    let merge_clone = clone_repo(workspace.path(), &origin, "side-first-merge-apply-clone");
+    add_remote(&merge_clone, SIDE_REMOTE_NAME, &side_remote);
+
+    let merge_head_before = rev_parse_head(&merge_clone);
+    apply::run(
+        &ApplyArgs {
+            repo: Some(merge_clone.clone()),
+            method: ApplyMethodArg::Merge,
+        },
+        &apply_cfg,
+    )
+    .expect("merge apply should succeed");
+    let merge_head_after = rev_parse_head(&merge_clone);
+
+    assert_ne!(merge_head_before, merge_head_after);
+    assert_eq!(
+        read_file(&merge_clone, "tracked.txt"),
+        "side branch first commit\n"
+    );
 }
 
 #[test]
