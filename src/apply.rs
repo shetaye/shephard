@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
@@ -41,7 +41,7 @@ pub fn run(args: &ApplyArgs, config: &ResolvedConfig) -> Result<()> {
     Ok(())
 }
 
-fn canonical_repo(path: &PathBuf) -> Result<PathBuf> {
+fn canonical_repo(path: &Path) -> Result<PathBuf> {
     path.canonicalize()
         .with_context(|| format!("failed to canonicalize {}", path.display()))
 }

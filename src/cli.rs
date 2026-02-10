@@ -15,7 +15,7 @@ pub enum Command {
     Apply(ApplyArgs),
 }
 
-#[derive(Debug, Clone, Parser)]
+#[derive(Debug, Clone, Default, Parser)]
 pub struct RunArgs {
     #[arg(long)]
     pub non_interactive: bool,
@@ -35,22 +35,6 @@ pub struct RunArgs {
     pub no_side_channel: bool,
     #[arg(long, value_name = "PATH")]
     pub roots: Vec<PathBuf>,
-}
-
-impl Default for RunArgs {
-    fn default() -> Self {
-        Self {
-            non_interactive: false,
-            repos: Vec::new(),
-            pull_only: false,
-            push: false,
-            include_untracked: false,
-            tracked_only: false,
-            side_channel: false,
-            no_side_channel: false,
-            roots: Vec::new(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Parser)]

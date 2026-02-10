@@ -48,6 +48,8 @@ pub fn side_channel_sync(
 ) -> Result<SideChannelSyncResult> {
     ensure_remote_exists(repo, &side.remote_name)?;
 
+    // Use a temporary index file so side-channel commits are produced from a
+    // detached index snapshot instead of mutating/staging in the real worktree.
     let temp_index = tempfile::NamedTempFile::new().context("failed to allocate temp git index")?;
     let index_path = temp_index.path().to_string_lossy().to_string();
     let env = [("GIT_INDEX_FILE", index_path.as_str())];
@@ -69,6 +71,7 @@ pub fn side_channel_sync(
         .to_string();
     let remote_ref = format!("{}/{}", side.remote_name, side.branch_name);
     let parent = rev_parse_optional(repo, &remote_ref)?;
+    // Build a commit object directly from the temporary tree so HEAD stays put.
     let commit_hash = commit_tree(repo, &tree, parent.as_deref(), message)?;
 
     run_git(

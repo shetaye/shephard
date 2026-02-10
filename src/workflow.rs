@@ -59,6 +59,8 @@ fn run_repo(repo: &Path, cfg: &ResolvedRunConfig) -> RepoResult {
             };
         }
 
+        // Side-channel mode bypasses local commit/push so branch history remains
+        // clean; commits are synthesized and pushed to the configured side branch.
         let message = git::generate_commit_message(&cfg.commit_template, cfg.include_untracked);
         return match git::side_channel_sync(
             repo,

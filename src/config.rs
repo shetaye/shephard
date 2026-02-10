@@ -34,6 +34,7 @@ pub struct TuiConfig {
 #[derive(Debug, Clone)]
 pub struct ResolvedConfig {
     pub workspace_roots: Vec<PathBuf>,
+    pub descend_hidden_dirs: bool,
     pub default_mode: RunMode,
     pub push_enabled: bool,
     pub include_untracked: bool,
@@ -46,6 +47,7 @@ pub struct ResolvedConfig {
 #[derive(Debug, Clone)]
 pub struct ResolvedRunConfig {
     pub workspace_roots: Vec<PathBuf>,
+    pub descend_hidden_dirs: bool,
     pub push_enabled: bool,
     pub include_untracked: bool,
     pub side_channel: SideChannelConfig,
@@ -56,6 +58,7 @@ pub struct ResolvedRunConfig {
 #[derive(Debug, Deserialize, Default)]
 struct PartialConfig {
     workspace_roots: Option<Vec<PathBuf>>,
+    descend_hidden_dirs: Option<bool>,
     default_mode: Option<RunMode>,
     push_enabled: Option<bool>,
     include_untracked: Option<bool>,
@@ -101,6 +104,9 @@ pub fn load() -> Result<ResolvedConfig> {
 
     if let Some(roots) = parsed.workspace_roots {
         cfg.workspace_roots = roots;
+    }
+    if let Some(descend_hidden_dirs) = parsed.descend_hidden_dirs {
+        cfg.descend_hidden_dirs = descend_hidden_dirs;
     }
     if let Some(mode) = parsed.default_mode {
         cfg.default_mode = mode;
@@ -187,6 +193,7 @@ pub fn resolve_run_config(base: &ResolvedConfig, args: &RunArgs) -> Result<Resol
 
     Ok(ResolvedRunConfig {
         workspace_roots,
+        descend_hidden_dirs: base.descend_hidden_dirs,
         push_enabled,
         include_untracked,
         side_channel,
@@ -198,6 +205,7 @@ pub fn resolve_run_config(base: &ResolvedConfig, args: &RunArgs) -> Result<Resol
 fn defaults() -> ResolvedConfig {
     ResolvedConfig {
         workspace_roots: default_workspace_roots(),
+        descend_hidden_dirs: false,
         default_mode: RunMode::SyncAll,
         push_enabled: true,
         include_untracked: false,
@@ -245,6 +253,7 @@ fn validate(cfg: &ResolvedConfig) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn pull_only_override_disables_push() {
@@ -255,7 +264,7 @@ mod tests {
         };
 
         let resolved = resolve_run_config(&base, &args).expect("resolve should succeed");
-        assert!(!resolved.push_enabled);
+        assert_eq!(resolved.push_enabled, false);
     }
 
     #[test]
@@ -284,5 +293,12 @@ mod tests {
 
         let resolved = resolve_run_config(&base, &args).expect("resolve should succeed");
         assert_eq!(resolved.workspace_roots, args.roots);
+    }
+
+    #[test]
+    fn hidden_directory_descent_defaults_to_false() {
+        let base = defaults();
+        let resolved = resolve_run_config(&base, &RunArgs::default()).expect("resolve should work");
+        assert_eq!(resolved.descend_hidden_dirs, false);
     }
 }

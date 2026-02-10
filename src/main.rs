@@ -1,5 +1,5 @@
 use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use clap::Parser;
@@ -36,7 +36,8 @@ fn run_sync(args: &RunArgs) -> Result<i32> {
     let mut state = state::load().unwrap_or_default();
     let run_cfg = config::resolve_run_config(&cfg, args)?;
 
-    let discovered = discovery::discover_repositories(&run_cfg.workspace_roots)?;
+    let discovered =
+        discovery::discover_repositories(&run_cfg.workspace_roots, run_cfg.descend_hidden_dirs)?;
     if discovered.is_empty() {
         println!("No git repositories found in configured workspace roots.");
         return Ok(0);
@@ -52,6 +53,10 @@ fn run_sync(args: &RunArgs) -> Result<i32> {
             &run_cfg,
             cfg.tui.persist_selection,
         )?;
+        let Some(chosen) = chosen else {
+            println!("Cancelled interactive run.");
+            return Ok(0);
+        };
         (
             chosen.selected_repos,
             chosen.run_config,
@@ -118,6 +123,8 @@ fn resolve_non_interactive_targets(
         })
         .collect();
 
+    // In non-interactive mode with no explicit --repos, prefer the persisted
+    // selection set; if there is none, fall back to all discovered repos.
     if !persisted.is_empty() {
         persisted
     } else {
@@ -125,7 +132,7 @@ fn resolve_non_interactive_targets(
     }
 }
 
-fn is_git_repo(path: &PathBuf) -> bool {
+fn is_git_repo(path: &Path) -> bool {
     let git_marker = path.join(".git");
     git_marker.is_dir() || git_marker.is_file()
 }

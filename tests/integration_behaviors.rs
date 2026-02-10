@@ -22,8 +22,8 @@ fn discovers_nested_repositories() {
     init_repo(&repo_a);
     init_repo(&repo_b);
 
-    let repos =
-        discovery::discover_repositories(&[root.to_path_buf()]).expect("discovery should work");
+    let repos = discovery::discover_repositories(&[root.to_path_buf()], false)
+        .expect("discovery should work");
     let paths: Vec<PathBuf> = repos.into_iter().map(|r| r.path).collect();
 
     assert!(paths.contains(&repo_a.canonicalize().expect("canonical a")));
@@ -281,7 +281,13 @@ fn clone_repo(root: &Path, origin: &Path, name: &str) -> PathBuf {
     let path = root.join(name);
     git(
         root,
-        &["clone", "--branch", "main", &path_str(origin), &path_str(&path)],
+        &[
+            "clone",
+            "--branch",
+            "main",
+            &path_str(origin),
+            &path_str(&path),
+        ],
     );
     configure_user(&path);
     path
@@ -350,6 +356,7 @@ fn run_config(
 ) -> ResolvedRunConfig {
     ResolvedRunConfig {
         workspace_roots: Vec::new(),
+        descend_hidden_dirs: false,
         push_enabled,
         include_untracked,
         side_channel: SideChannelConfig {
@@ -365,6 +372,7 @@ fn run_config(
 fn resolved_apply_config(remote_name: &str, branch_name: &str) -> ResolvedConfig {
     ResolvedConfig {
         workspace_roots: Vec::new(),
+        descend_hidden_dirs: false,
         default_mode: RunMode::SyncAll,
         push_enabled: true,
         include_untracked: false,

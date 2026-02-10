@@ -1,7 +1,7 @@
 # Maintainer: shetaye
 
 pkgname=shephard
-pkgver=0.1.1
+pkgver=0.1.2
 pkgrel=1
 pkgdesc='TUI tool to sync many Git repositories with pull/commit/push workflows'
 arch=('x86_64' 'aarch64')
