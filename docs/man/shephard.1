@@ -1,0 +1,105 @@
+.TH SHEPHARD 1 "February 2026" "shephard 0.1.4" "User Commands"
+.SH NAME
+shephard \- sync many Git repositories with pull/commit/push workflows
+.SH SYNOPSIS
+.B shephard
+.I COMMAND
+[\fIOPTIONS\fR]
+.SH DESCRIPTION
+.B shephard
+is a Rust CLI/TUI for running Git sync workflows across many repositories.
+It discovers repositories from configured roots, lets you select targets, then runs
+\fBgit pull --ff-only\fR with optional commit/push behavior.
+.PP
+Side-channel mode can snapshot working-tree changes into a dedicated remote branch
+without creating commits on your current local branch.
+.SH COMMANDS
+.TP
+.B run
+Run the multi-repository sync workflow.
+.TP
+.B apply
+Apply side-channel commits onto the current branch in one repository.
+.SH RUN OPTIONS
+.TP
+.B --non-interactive
+Run without the TUI selector.
+.TP
+.B --repos \fIPATH\fR ...
+Operate only on explicit repository paths.
+.TP
+.B --pull-only
+Only pull (\fBgit pull --ff-only\fR). Do not commit/push.
+.TP
+.B --push
+Enable commit/push behavior (subject to config and mode).
+.TP
+.B --include-untracked
+Stage tracked and untracked files.
+.TP
+.B --tracked-only
+Stage tracked files only.
+.TP
+.B --side-channel
+Enable side-channel sync mode.
+.TP
+.B --no-side-channel
+Disable side-channel sync mode.
+.TP
+.B --roots \fIPATH\fR ...
+Override configured discovery roots for this run.
+.SH APPLY OPTIONS
+.TP
+.B --repo \fIPATH\fR
+Repository path. Defaults to current directory.
+.TP
+.B --method \fImerge|cherry-pick|squash\fR
+Apply strategy for side-channel changes.
+.SH CONFIGURATION
+Config file:
+.PP
+\fB~/.config/shephard/config.toml\fR
+.PP
+All keys are optional. Built-in defaults are applied first, then config values,
+then per-run CLI/TUI overrides.
+.SH SIDE-CHANNEL SAFETY
+With side-channel enabled,
+.B shephard
+uses a temporary Git index to snapshot local changes and avoids modifying the
+real index or local \fBHEAD\fR during sync.
+.PP
+Before creating the side-channel commit, it performs a virtual three-way apply
+against the current side-branch tip. If conflicts are detected, sync fails with
+conflicting paths instead of silently overwriting side-channel content.
+.PP
+If push is rejected because the side branch advanced concurrently, shephard
+fetches, recomputes once, and retries.
+.SH EXIT STATUS
+.TP
+.B 0
+All selected repositories succeeded or were no-op.
+.TP
+.B 1
+At least one selected repository failed.
+.TP
+.B 2
+Startup/config/usage failure.
+.SH FILES
+.TP
+.B ~/.config/shephard/config.toml
+Main configuration file.
+.SH EXAMPLES
+.TP
+Run interactive sync:
+.PP
+\fBshephard run\fR
+.TP
+Run non-interactive sync for two repos:
+.PP
+\fBshephard run --non-interactive --repos /path/a /path/b --push\fR
+.TP
+Apply side-channel branch with merge:
+.PP
+\fBshephard apply --repo /path/repo --method merge\fR
+.SH SEE ALSO
+.BR git (1)

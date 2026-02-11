@@ -8,6 +8,7 @@ use shephard::cli::{ApplyArgs, ApplyMethodArg};
 use shephard::config::{
     FailurePolicy, ResolvedConfig, ResolvedRunConfig, RunMode, SideChannelConfig, TuiConfig,
 };
+use shephard::git as shephard_git;
 use shephard::{discovery, workflow};
 
 const SIDE_REMOTE_NAME: &str = "shephard";
@@ -295,6 +296,163 @@ fn apply_merge_cherry_pick_and_squash_behaviors() {
     assert!(squash_status.contains("M  tracked.txt"));
 }
 
+#[test]
+fn workflow_side_channel_merges_non_conflicting_file_edits_instead_of_overwriting() {
+    let workspace = temp_workspace();
+    let (origin, host_a) = setup_origin_and_clone_with_initial_file(
+        workspace.path(),
+        "side-merge-non-conflicting",
+        "line one\nline two\nline three\nline four\nline five\n",
+    );
+    let host_b = clone_repo(workspace.path(), &origin, "side-merge-non-conflicting-peer");
+    let side_remote = create_bare_remote(workspace.path(), "side-merge-non-conflicting-side");
+
+    add_remote(&host_a, SIDE_REMOTE_NAME, &side_remote);
+    add_remote(&host_b, SIDE_REMOTE_NAME, &side_remote);
+    seed_side_branch_from_head(&host_a);
+
+    write_file(
+        &host_a,
+        "tracked.txt",
+        "line one\nline two from host A\nline three\nline four\nline five\n",
+    );
+    let cfg = run_config(true, false, true, SIDE_REMOTE_NAME, SIDE_BRANCH_NAME);
+    let host_a_results = workflow::run(std::slice::from_ref(&host_a), &cfg);
+    assert!(matches!(
+        host_a_results[0].status,
+        workflow::RepoStatus::Success
+    ));
+
+    write_file(
+        &host_b,
+        "tracked.txt",
+        "line one\nline two\nline three\nline four from host B\nline five\n",
+    );
+    let host_b_results = workflow::run(std::slice::from_ref(&host_b), &cfg);
+    assert!(matches!(
+        host_b_results[0].status,
+        workflow::RepoStatus::Success
+    ));
+
+    let apply_cfg = resolved_apply_config(SIDE_REMOTE_NAME, SIDE_BRANCH_NAME);
+    let verify_clone = clone_repo(
+        workspace.path(),
+        &origin,
+        "side-merge-non-conflicting-verify",
+    );
+    add_remote(&verify_clone, SIDE_REMOTE_NAME, &side_remote);
+    apply::run(
+        &ApplyArgs {
+            repo: Some(verify_clone.clone()),
+            method: ApplyMethodArg::Merge,
+        },
+        &apply_cfg,
+    )
+    .expect("merge apply should succeed");
+
+    assert_eq!(
+        read_file(&verify_clone, "tracked.txt"),
+        "line one\nline two from host A\nline three\nline four from host B\nline five\n"
+    );
+}
+
+#[test]
+fn workflow_side_channel_conflicting_file_edits_fail_without_overwriting_existing_tip() {
+    let workspace = temp_workspace();
+    let (origin, host_a) = setup_origin_and_clone_with_initial_file(
+        workspace.path(),
+        "side-merge-conflicting",
+        "line one\nline two\n",
+    );
+    let host_b = clone_repo(workspace.path(), &origin, "side-merge-conflicting-peer");
+    let side_remote = create_bare_remote(workspace.path(), "side-merge-conflicting-side");
+
+    add_remote(&host_a, SIDE_REMOTE_NAME, &side_remote);
+    add_remote(&host_b, SIDE_REMOTE_NAME, &side_remote);
+    seed_side_branch_from_head(&host_a);
+
+    write_file(&host_a, "tracked.txt", "line one from host A\nline two\n");
+    let cfg = run_config(true, false, true, SIDE_REMOTE_NAME, SIDE_BRANCH_NAME);
+    let host_a_results = workflow::run(std::slice::from_ref(&host_a), &cfg);
+    assert!(matches!(
+        host_a_results[0].status,
+        workflow::RepoStatus::Success
+    ));
+
+    write_file(&host_b, "tracked.txt", "line one from host B\nline two\n");
+    let host_b_results = workflow::run(std::slice::from_ref(&host_b), &cfg);
+    assert!(matches!(
+        host_b_results[0].status,
+        workflow::RepoStatus::Failed
+    ));
+    assert!(host_b_results[0].message.contains("conflict"));
+
+    let apply_cfg = resolved_apply_config(SIDE_REMOTE_NAME, SIDE_BRANCH_NAME);
+    let verify_clone = clone_repo(workspace.path(), &origin, "side-merge-conflicting-verify");
+    add_remote(&verify_clone, SIDE_REMOTE_NAME, &side_remote);
+    apply::run(
+        &ApplyArgs {
+            repo: Some(verify_clone.clone()),
+            method: ApplyMethodArg::Merge,
+        },
+        &apply_cfg,
+    )
+    .expect("merge apply should succeed");
+
+    assert_eq!(
+        read_file(&verify_clone, "tracked.txt"),
+        "line one from host A\nline two\n"
+    );
+}
+
+#[test]
+fn side_channel_sync_retries_non_fast_forward_with_refetch_and_merges_latest_tip() {
+    let workspace = temp_workspace();
+    let (origin, host_a) = setup_origin_and_clone(workspace.path(), "side-retry-race");
+    let host_b = clone_repo(workspace.path(), &origin, "side-retry-race-peer");
+    let side_remote = create_bare_remote(workspace.path(), "side-retry-race-side");
+    let side_cfg = SideChannelConfig {
+        enabled: true,
+        remote_name: SIDE_REMOTE_NAME.to_string(),
+        branch_name: SIDE_BRANCH_NAME.to_string(),
+    };
+
+    add_remote(&host_a, SIDE_REMOTE_NAME, &side_remote);
+    add_remote(&host_b, SIDE_REMOTE_NAME, &side_remote);
+    seed_side_branch_from_head(&host_a);
+
+    shephard_git::side_channel_preflight(&host_b, &side_cfg)
+        .expect("host B preflight should fetch current side tip");
+
+    write_file(&host_a, "a.txt", "from host A\n");
+    let cfg = run_config(true, true, true, SIDE_REMOTE_NAME, SIDE_BRANCH_NAME);
+    let host_a_results = workflow::run(std::slice::from_ref(&host_a), &cfg);
+    assert!(matches!(
+        host_a_results[0].status,
+        workflow::RepoStatus::Success
+    ));
+
+    write_file(&host_b, "b.txt", "from host B\n");
+    let sync_result = shephard_git::side_channel_sync(&host_b, &side_cfg, true, "race retry test");
+    assert!(matches!(
+        sync_result,
+        Ok(shephard_git::SideChannelSyncResult::Pushed)
+    ));
+
+    let ls_tree = git(
+        workspace.path(),
+        &[
+            "--git-dir",
+            &path_str(&side_remote),
+            "ls-tree",
+            "--name-only",
+            SIDE_BRANCH_NAME,
+        ],
+    );
+    assert!(ls_tree.lines().any(|line| line == "a.txt"));
+    assert!(ls_tree.lines().any(|line| line == "b.txt"));
+}
+
 fn temp_workspace() -> tempfile::TempDir {
     tempfile::Builder::new()
         .prefix("shephard-int-")
@@ -303,9 +461,17 @@ fn temp_workspace() -> tempfile::TempDir {
 }
 
 fn setup_origin_and_clone(root: &Path, name: &str) -> (PathBuf, PathBuf) {
+    setup_origin_and_clone_with_initial_file(root, name, "initial\n")
+}
+
+fn setup_origin_and_clone_with_initial_file(
+    root: &Path,
+    name: &str,
+    initial_file_content: &str,
+) -> (PathBuf, PathBuf) {
     let seed = root.join(format!("{name}-seed"));
     init_repo(&seed);
-    write_file(&seed, "tracked.txt", "initial\n");
+    write_file(&seed, "tracked.txt", initial_file_content);
     commit_all(&seed, "initial commit");
 
     let origin = root.join(format!("{name}-origin.git"));

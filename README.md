@@ -37,6 +37,12 @@ Run directly:
 cargo run -- run
 ```
 
+View help as a man page (when installed by package manager):
+
+```bash
+man shephard
+```
+
 ## CLI
 
 Top-level commands:
@@ -117,10 +123,15 @@ For each selected repo, shephard does this:
 6. Uses `git add -u` when `include_untracked = false`.
 7. Uses `git add -A` when `include_untracked = true`.
 8. Checks `git diff --cached --quiet` (against the temporary index). If nothing changed, it reports no-op.
-9. Writes the tree with `git write-tree`.
-10. Resolves current side-branch tip (`<remote>/<branch>`) as parent if it exists.
-11. Creates a commit object with `git commit-tree` (without moving local `HEAD`).
-12. Pushes that commit hash directly to `<remote>:<branch>`.
+9. Writes the local snapshot tree with `git write-tree`.
+10. If a side-branch tip exists and is not already contained in local `HEAD`, performs a virtual 3-way apply (`git merge-tree --write-tree`) between:
+11. merge base of local `HEAD` and side tip,
+12. local snapshot commit,
+13. side tip commit.
+14. If virtual apply has conflicts, sync fails and reports conflicting paths.
+15. Creates a commit object with `git commit-tree` (without moving local `HEAD`), using side tip as parent when present.
+16. Pushes that commit hash directly to `<remote>:<branch>`.
+17. If push is rejected non-fast-forward, fetches side channel, recomputes once, and retries push.
 
 ### What side-channel mode changes vs does not change
 
@@ -143,7 +154,8 @@ For each selected repo, shephard does this:
 
 1. Missing side-channel remote (`side_channel.remote_name`) in a repo.
 2. Non-fast-forward pull failure before sync (`git pull --ff-only`).
-3. Push rejection if side branch advanced concurrently and your local computed parent is stale.
+3. Virtual side-channel apply conflict (same paths cannot be merged cleanly).
+4. Push rejection even after one automatic refetch/retry if the side branch keeps advancing concurrently.
 
 ## Exit codes
 
@@ -191,3 +203,4 @@ makepkg -Ccf
 - `src/state.rs`: persisted selection state
 - `src/report.rs`: run summary + exit code mapping
 - `tests/integration_behaviors.rs`: integration coverage across git workflows
+- `docs/man/shephard.1`: manual page (`man shephard`)
