@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 use crate::cli::{ApplyArgs, ApplyMethodArg};
-use crate::config::ResolvedConfig;
+use crate::config::{self, ResolvedConfig};
 use crate::git;
 
 pub fn run(args: &ApplyArgs, config: &ResolvedConfig) -> Result<()> {
@@ -13,9 +13,9 @@ pub fn run(args: &ApplyArgs, config: &ResolvedConfig) -> Result<()> {
     };
 
     let repo = canonical_repo(&repo)?;
-    let side = &config.side_channel;
+    let side = config::resolve_apply_side_channel(config, &repo);
 
-    git::fetch_side_channel(&repo, side).with_context(|| {
+    git::fetch_side_channel(&repo, &side).with_context(|| {
         format!(
             "failed to fetch side-channel branch {}/{} for {}",
             side.remote_name,
@@ -25,11 +25,11 @@ pub fn run(args: &ApplyArgs, config: &ResolvedConfig) -> Result<()> {
     })?;
 
     match args.method {
-        ApplyMethodArg::Merge => git::merge_side_channel_ff(&repo, side)
+        ApplyMethodArg::Merge => git::merge_side_channel_ff(&repo, &side)
             .with_context(|| format!("failed to ff-merge into {}", repo.display()))?,
-        ApplyMethodArg::CherryPick => git::cherry_pick_side_channel_tip(&repo, side)
+        ApplyMethodArg::CherryPick => git::cherry_pick_side_channel_tip(&repo, &side)
             .with_context(|| format!("failed to cherry-pick into {}", repo.display()))?,
-        ApplyMethodArg::Squash => git::squash_merge_side_channel(&repo, side)
+        ApplyMethodArg::Squash => git::squash_merge_side_channel(&repo, &side)
             .with_context(|| format!("failed to squash-merge into {}", repo.display()))?,
     }
 

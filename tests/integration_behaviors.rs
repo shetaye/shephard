@@ -6,7 +6,7 @@ use pretty_assertions::assert_eq;
 use shephard::apply;
 use shephard::cli::{ApplyArgs, ApplyMethodArg};
 use shephard::config::{
-    FailurePolicy, ResolvedConfig, ResolvedRunConfig, RunMode, SideChannelConfig, TuiConfig,
+    FailurePolicy, ResolvedConfig, ResolvedRunConfig, RunMode, SideChannelConfig,
 };
 use shephard::git as shephard_git;
 use shephard::{discovery, workflow};
@@ -562,8 +562,6 @@ fn run_config(
     branch_name: &str,
 ) -> ResolvedRunConfig {
     ResolvedRunConfig {
-        workspace_roots: Vec::new(),
-        descend_hidden_dirs: false,
         push_enabled,
         include_untracked,
         side_channel: SideChannelConfig {
@@ -578,8 +576,6 @@ fn run_config(
 
 fn resolved_apply_config(remote_name: &str, branch_name: &str) -> ResolvedConfig {
     ResolvedConfig {
-        workspace_roots: Vec::new(),
-        descend_hidden_dirs: false,
         default_mode: RunMode::SyncAll,
         push_enabled: true,
         include_untracked: false,
@@ -590,9 +586,7 @@ fn resolved_apply_config(remote_name: &str, branch_name: &str) -> ResolvedConfig
         },
         commit_template: "shephard sync: {timestamp} {hostname} [{scope}]".to_string(),
         failure_policy: FailurePolicy::Continue,
-        tui: TuiConfig {
-            persist_selection: true,
-        },
+        repositories: Vec::new(),
     }
 }
 

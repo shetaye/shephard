@@ -1,8 +1,9 @@
 # shephard
 
-`shephard` is a Rust CLI/TUI for syncing many Git repositories in one run.
+`shephard` is a Rust CLI for syncing many Git repositories in one run.
 
-It scans configured roots for repos, lets you pick targets interactively (or pass them non-interactively), and runs a simple workflow:
+Repositories are configured declaratively in `~/.config/shephard/config.toml`.
+`shephard run` uses that config and runs a simple workflow:
 
 1. `git pull --ff-only`
 2. optional commit
@@ -10,16 +11,16 @@ It scans configured roots for repos, lets you pick targets interactively (or pas
 
 ## Status
 
-Current version: `0.1.2`
+Current version: `0.1.4`
 
 The project is functional, test-covered, and packaged for Arch via `dist/arch/PKGBUILD`.
 
 ## Features
 
-- Recursive repository discovery from configured roots
-- Interactive `ratatui` multi-select flow (persisted repo selection)
-- Non-interactive mode for scripts/automation
-- Per-run overrides via CLI or interactive prompts
+- TOML-driven repository selection (`[[repositories]]`)
+- Non-interactive execution suitable for scripts/automation
+- Per-run CLI overrides
+- Per-repository overrides for untracked scope and side-channel settings
 - Tracked-only or include-untracked commit scope
 - Side-channel sync mode that avoids polluting the current branch
 - Manual side-channel apply (`merge`, `cherry-pick`, `squash`)
@@ -52,15 +53,14 @@ Top-level commands:
 
 Run flags:
 
-- `--non-interactive`
-- `--repos <PATH>...`
+- `--non-interactive` (accepted for compatibility; no effect)
+- `--repos <PATH>...` (filter configured repositories)
 - `--pull-only`
 - `--push`
 - `--include-untracked`
 - `--tracked-only`
 - `--side-channel`
 - `--no-side-channel`
-- `--roots <PATH>...`
 
 Apply flags:
 
@@ -78,11 +78,9 @@ If no config exists, shephard uses built-in defaults.
 All keys are optional. Example:
 
 ```toml
-workspace_roots = ["/home/you/projects", "/home/you/code"]
 default_mode = "sync_all" # or "pull_only"
 push_enabled = true
 include_untracked = false
-descend_hidden_dirs = false
 failure_policy = "continue"
 
 [side_channel]
@@ -93,15 +91,33 @@ branch_name = "shephard/sync"
 [commit]
 message_template = "shephard sync: {timestamp} {hostname} [{scope}]"
 
-[tui]
-persist_selection = true
+[[repositories]]
+path = "/home/you/projects/repo-a"
+enabled = true
+include_untracked = false
+
+[repositories.side_channel]
+enabled = true
+remote_name = "shephard"
+branch_name = "shephard/sync"
+
+[[repositories]]
+path = "/home/you/code/repo-b"
+enabled = true
 ```
 
 Resolution order:
 
 1. built-in defaults
-2. config file values
-3. current run overrides (CLI/TUI)
+2. global config values
+3. per-repository config values
+4. current run CLI overrides
+
+Notes:
+
+- `shephard run` operates only on configured repositories.
+- Without `--repos`, all configured `enabled = true` repositories are processed.
+- With `--repos`, only matching configured repositories are processed; unknown paths are skipped.
 
 ## Side-channel mode
 
@@ -119,19 +135,16 @@ For each selected repo, shephard does this:
 2. Verifies the side-channel remote exists, then fetches it with `--prune`.
 3. Creates a temporary Git index file and sets `GIT_INDEX_FILE` to it.
 4. Loads `HEAD` into that temporary index with `git read-tree HEAD`.
-5. Stages into the temporary index from your working tree:
+5. Stages into the temporary index from your working tree.
 6. Uses `git add -u` when `include_untracked = false`.
 7. Uses `git add -A` when `include_untracked = true`.
 8. Checks `git diff --cached --quiet` (against the temporary index). If nothing changed, it reports no-op.
 9. Writes the local snapshot tree with `git write-tree`.
-10. If a side-branch tip exists and is not already contained in local `HEAD`, performs a virtual 3-way apply (`git merge-tree --write-tree`) between:
-11. merge base of local `HEAD` and side tip,
-12. local snapshot commit,
-13. side tip commit.
-14. If virtual apply has conflicts, sync fails and reports conflicting paths.
-15. Creates a commit object with `git commit-tree` (without moving local `HEAD`), using side tip as parent when present.
-16. Pushes that commit hash directly to `<remote>:<branch>`.
-17. If push is rejected non-fast-forward, fetches side channel, recomputes once, and retries push.
+10. If a side-branch tip exists and is not already contained in local `HEAD`, performs a virtual 3-way apply (`git merge-tree --write-tree`).
+11. If virtual apply has conflicts, sync fails and reports conflicting paths.
+12. Creates a commit object with `git commit-tree` (without moving local `HEAD`), using side tip as parent when present.
+13. Pushes that commit hash directly to `<remote>:<branch>`.
+14. If push is rejected non-fast-forward, fetches side channel, recomputes once, and retries push.
 
 ### What side-channel mode changes vs does not change
 
@@ -150,13 +163,6 @@ For each selected repo, shephard does this:
 2. `cherry-pick`: cherry-picks the side branch tip commit
 3. `squash`: `git merge --squash <remote>/<branch>` (staged changes, no commit yet)
 
-### Common failure cases
-
-1. Missing side-channel remote (`side_channel.remote_name`) in a repo.
-2. Non-fast-forward pull failure before sync (`git pull --ff-only`).
-3. Virtual side-channel apply conflict (same paths cannot be merged cleanly).
-4. Push rejection even after one automatic refetch/retry if the side branch keeps advancing concurrently.
-
 ## Exit codes
 
 - `0`: all selected repos succeeded or no-op
@@ -168,16 +174,6 @@ For each selected repo, shephard does this:
 ```bash
 cargo test
 ```
-
-Integration tests create temporary repos/remotes under `/tmp` and validate:
-
-- discovery
-- ff-only pull behavior
-- tracked/untracked commit scope
-- no-op commit path
-- continue-on-failure
-- side-channel behavior
-- apply merge/cherry-pick/squash behavior
 
 ## Arch packaging (`dist/arch/PKGBUILD`)
 
@@ -195,12 +191,10 @@ makepkg -Ccf
 - `src/main.rs`: app entrypoint + command routing
 - `src/cli.rs`: clap CLI definitions
 - `src/config.rs`: config/defaults/validation + run-time resolution
-- `src/discovery.rs`: recursive Git repo discovery
-- `src/tui.rs`: interactive ratatui selection + per-run prompts
+- `src/discovery.rs`: repository discovery utilities and tests
 - `src/workflow.rs`: per-repo sync orchestration
 - `src/git.rs`: git subprocess operations
 - `src/apply.rs`: side-channel apply flow
-- `src/state.rs`: persisted selection state
 - `src/report.rs`: run summary + exit code mapping
 - `tests/integration_behaviors.rs`: integration coverage across git workflows
 - `docs/man/shephard.1`: manual page (`man shephard`)

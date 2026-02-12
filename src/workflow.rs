@@ -33,6 +33,22 @@ pub fn run(repos: &[PathBuf], cfg: &ResolvedRunConfig) -> Vec<RepoResult> {
     results
 }
 
+pub fn run_with_repo_configs(repos: &[(PathBuf, ResolvedRunConfig)]) -> Vec<RepoResult> {
+    let mut results = Vec::new();
+
+    for (repo, cfg) in repos {
+        let outcome = run_repo(repo, cfg);
+        let failed = matches!(outcome.status, RepoStatus::Failed);
+        results.push(outcome);
+
+        if failed && !matches!(cfg.failure_policy, FailurePolicy::Continue) {
+            break;
+        }
+    }
+
+    results
+}
+
 fn run_repo(repo: &Path, cfg: &ResolvedRunConfig) -> RepoResult {
     if let Err(err) = git::pull_ff_only(repo) {
         return RepoResult {

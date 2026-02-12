@@ -33,8 +33,6 @@ pub struct RunArgs {
     pub side_channel: bool,
     #[arg(long)]
     pub no_side_channel: bool,
-    #[arg(long, value_name = "PATH")]
-    pub roots: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, Parser)]

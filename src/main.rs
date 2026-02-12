@@ -1,11 +1,12 @@
-use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 use anyhow::Result;
 use clap::Parser;
-use shephard::{apply, config, discovery, report, state, tui, workflow};
+use shephard::{apply, config, report, workflow};
 
 use shephard::cli::{Cli, Command, RunArgs};
+use shephard::config::ResolvedRepositoryConfig;
 
 fn main() {
     let exit_code = match run() {
@@ -33,106 +34,156 @@ fn run() -> Result<i32> {
 
 fn run_sync(args: &RunArgs) -> Result<i32> {
     let cfg = config::load()?;
-    let mut state = state::load().unwrap_or_default();
-    let run_cfg = config::resolve_run_config(&cfg, args)?;
+    let base_run_cfg = config::resolve_run_config(&cfg, args)?;
 
-    let discovered =
-        discovery::discover_repositories(&run_cfg.workspace_roots, run_cfg.descend_hidden_dirs)?;
-    if discovered.is_empty() {
-        println!("No git repositories found in configured workspace roots.");
-        return Ok(0);
-    }
+    let enabled_repositories = config::enabled_repositories(&cfg);
+    let selected_repositories =
+        resolve_configured_targets(args, &enabled_repositories, &cfg.repositories);
 
-    let (selected_repos, effective_run_cfg, should_persist_selection) = if args.non_interactive {
-        let selected = resolve_non_interactive_targets(args, &discovered, &state.selected_repos);
-        (selected, run_cfg, false)
-    } else {
-        let chosen = tui::select_and_configure_run(
-            &discovered,
-            &mut state,
-            &run_cfg,
-            cfg.tui.persist_selection,
-        )?;
-        let Some(chosen) = chosen else {
-            println!("Cancelled interactive run.");
-            return Ok(0);
-        };
-        (
-            chosen.selected_repos,
-            chosen.run_config,
-            cfg.tui.persist_selection,
-        )
-    };
-
-    if selected_repos.is_empty() {
+    if selected_repositories.is_empty() {
         println!("No repositories selected.");
-        if should_persist_selection {
-            state::save(&state)?;
-        }
         return Ok(0);
     }
 
-    let results = workflow::run(&selected_repos, &effective_run_cfg);
-    report::print_run_summary(&results);
+    let mut run_targets = Vec::new();
+    for repo in selected_repositories {
+        if !is_git_repo(&repo.path) {
+            eprintln!(
+                "Skipping {} because it is not a git repository",
+                repo.path.display()
+            );
+            continue;
+        }
 
-    if should_persist_selection {
-        state::save(&state)?;
+        let run_cfg = config::resolve_repo_run_config(&base_run_cfg, args, &repo);
+        run_targets.push((repo.path.clone(), run_cfg));
     }
+
+    if run_targets.is_empty() {
+        println!("No repositories selected.");
+        return Ok(0);
+    }
+
+    let results = workflow::run_with_repo_configs(&run_targets);
+    report::print_run_summary(&results);
 
     Ok(report::exit_code(&results))
 }
 
-fn resolve_non_interactive_targets(
+fn resolve_configured_targets(
     args: &RunArgs,
-    discovered: &[discovery::Repo],
-    persisted_selection: &std::collections::BTreeMap<String, bool>,
-) -> Vec<PathBuf> {
-    if !args.repos.is_empty() {
-        let mut seen = BTreeSet::new();
-        let mut selected = Vec::new();
-
-        for path in &args.repos {
-            let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-            let key = canonical.to_string_lossy().to_string();
-            if !seen.insert(key) {
-                continue;
-            }
-
-            if is_git_repo(&canonical) {
-                selected.push(canonical);
-            } else {
-                eprintln!(
-                    "Skipping {} because it is not a git repository",
-                    path.display()
-                );
-            }
-        }
-
-        return selected;
+    enabled_repositories: &[ResolvedRepositoryConfig],
+    all_repositories: &[ResolvedRepositoryConfig],
+) -> Vec<ResolvedRepositoryConfig> {
+    if args.repos.is_empty() {
+        return enabled_repositories.to_vec();
     }
 
-    let persisted: Vec<PathBuf> = discovered
+    let configured_keys: BTreeSet<String> = all_repositories
         .iter()
-        .filter_map(|repo| {
-            let key = state::canonical_repo_key(&repo.path);
-            if persisted_selection.get(&key).copied().unwrap_or(false) {
-                Some(repo.path.clone())
-            } else {
-                None
-            }
-        })
+        .map(|repo| config::canonical_repo_key(&repo.path))
+        .collect();
+    let enabled_by_key: BTreeMap<String, ResolvedRepositoryConfig> = enabled_repositories
+        .iter()
+        .cloned()
+        .map(|repo| (config::canonical_repo_key(&repo.path), repo))
         .collect();
 
-    // In non-interactive mode with no explicit --repos, prefer the persisted
-    // selection set; if there is none, fall back to all discovered repos.
-    if !persisted.is_empty() {
-        persisted
-    } else {
-        discovered.iter().map(|repo| repo.path.clone()).collect()
+    let mut selected = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    for path in &args.repos {
+        let key = config::canonical_repo_key(path);
+        if !seen.insert(key.clone()) {
+            continue;
+        }
+
+        if let Some(repo) = enabled_by_key.get(&key) {
+            selected.push(repo.clone());
+            continue;
+        }
+
+        if configured_keys.contains(&key) {
+            eprintln!(
+                "Skipping {} because it is disabled in config",
+                path.display()
+            );
+        } else {
+            eprintln!("Skipping {} because it is not configured", path.display());
+        }
     }
+
+    selected
 }
 
 fn is_git_repo(path: &Path) -> bool {
     let git_marker = path.join(".git");
     git_marker.is_dir() || git_marker.is_file()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use shephard::config::ResolvedRepositorySideChannelConfig;
+
+    #[test]
+    fn resolve_targets_defaults_to_enabled_repositories() {
+        let args = RunArgs::default();
+        let all = vec![
+            repo_config("/tmp/repo-a", true),
+            repo_config("/tmp/repo-b", false),
+            repo_config("/tmp/repo-c", true),
+        ];
+        let enabled = all
+            .iter()
+            .filter(|repo| repo.enabled)
+            .cloned()
+            .collect::<Vec<_>>();
+
+        let selected = resolve_configured_targets(&args, &enabled, &all);
+        let selected_paths = selected
+            .into_iter()
+            .map(|repo| repo.path)
+            .collect::<Vec<PathBuf>>();
+
+        assert_eq!(
+            selected_paths,
+            vec![PathBuf::from("/tmp/repo-a"), PathBuf::from("/tmp/repo-c")]
+        );
+    }
+
+    #[test]
+    fn resolve_targets_filters_to_matching_enabled_repositories() {
+        let temp = tempfile::tempdir().expect("tempdir should work");
+        let repo_path = temp.path().join("repo");
+        std::fs::create_dir_all(&repo_path).expect("repo directory should be created");
+
+        let args = RunArgs {
+            repos: vec![repo_path.clone()],
+            ..RunArgs::default()
+        };
+        let all = vec![repo_config(&repo_path.to_string_lossy(), true)];
+        let enabled = all.clone();
+
+        let selected = resolve_configured_targets(&args, &enabled, &all);
+        let selected_paths = selected
+            .into_iter()
+            .map(|repo| repo.path)
+            .collect::<Vec<PathBuf>>();
+
+        assert_eq!(selected_paths, vec![repo_path]);
+    }
+
+    fn repo_config(path: &str, enabled: bool) -> ResolvedRepositoryConfig {
+        ResolvedRepositoryConfig {
+            path: PathBuf::from(path),
+            enabled,
+            include_untracked: None,
+            side_channel: ResolvedRepositorySideChannelConfig::default(),
+        }
+    }
 }

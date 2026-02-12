@@ -7,9 +7,10 @@ shephard \- sync many Git repositories with pull/commit/push workflows
 [\fIOPTIONS\fR]
 .SH DESCRIPTION
 .B shephard
-is a Rust CLI/TUI for running Git sync workflows across many repositories.
-It discovers repositories from configured roots, lets you select targets, then runs
-\fBgit pull --ff-only\fR with optional commit/push behavior.
+is a Rust CLI for running Git sync workflows across configured repositories.
+Repository targets are read from
+.B ~/.config/shephard/config.toml
+and run non-interactively.
 .PP
 Side-channel mode can snapshot working-tree changes into a dedicated remote branch
 without creating commits on your current local branch.
@@ -23,10 +24,10 @@ Apply side-channel commits onto the current branch in one repository.
 .SH RUN OPTIONS
 .TP
 .B --non-interactive
-Run without the TUI selector.
+Accepted for compatibility. No effect.
 .TP
 .B --repos \fIPATH\fR ...
-Operate only on explicit repository paths.
+Operate only on matching configured repository paths.
 .TP
 .B --pull-only
 Only pull (\fBgit pull --ff-only\fR). Do not commit/push.
@@ -45,9 +46,6 @@ Enable side-channel sync mode.
 .TP
 .B --no-side-channel
 Disable side-channel sync mode.
-.TP
-.B --roots \fIPATH\fR ...
-Override configured discovery roots for this run.
 .SH APPLY OPTIONS
 .TP
 .B --repo \fIPATH\fR
@@ -60,8 +58,12 @@ Config file:
 .PP
 \fB~/.config/shephard/config.toml\fR
 .PP
-All keys are optional. Built-in defaults are applied first, then config values,
-then per-run CLI/TUI overrides.
+All keys are optional. Built-in defaults are applied first, then global config values,
+then per-repository values, then per-run CLI overrides.
+.PP
+Repositories must be declared in \fB[[repositories]]\fR entries.
+Without \fB--repos\fR, shephard processes all enabled repositories.
+With \fB--repos\fR, unknown paths are skipped.
 .SH SIDE-CHANNEL SAFETY
 With side-channel enabled,
 .B shephard
@@ -90,13 +92,13 @@ Startup/config/usage failure.
 Main configuration file.
 .SH EXAMPLES
 .TP
-Run interactive sync:
+Run configured repositories:
 .PP
 \fBshephard run\fR
 .TP
-Run non-interactive sync for two repos:
+Run a configured subset:
 .PP
-\fBshephard run --non-interactive --repos /path/a /path/b --push\fR
+\fBshephard run --repos /path/a /path/b --push\fR
 .TP
 Apply side-channel branch with merge:
 .PP
